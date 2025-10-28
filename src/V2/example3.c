@@ -55,7 +55,7 @@ int main()
   KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
   KLTWriteFeatureTable(ft, "features.ft", NULL);
   int n=1;
-
+ int n=2;
   KLTFreeFeatureTable(ft);
   KLTFreeFeatureList(fl);
   KLTFreeTrackingContext(tc);
