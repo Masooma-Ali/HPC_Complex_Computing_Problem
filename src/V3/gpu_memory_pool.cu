@@ -30,6 +30,15 @@ static GPU_MemoryPool g_pool = {0};
  *********************************************************************/
 extern "C" int GPU_InitMemoryPool(int max_ncols, int max_nrows, int max_window_size)
 {
+    // Check CUDA availability first
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        fprintf(stderr, "ERROR: No CUDA devices available. Error: %s\n", 
+                cudaGetErrorString(err));
+        return -1;
+    }
+    
     // Calculate sizes
     int img_size = max_ncols * max_nrows * sizeof(float);
     int window_size = max_window_size * max_window_size * sizeof(float);

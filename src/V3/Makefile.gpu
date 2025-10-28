@@ -20,10 +20,10 @@ gpu_objs:
 	$(NVCC) -c -arch=$(ARCH) -O3 convole.cu trackfeatures.cu selectGoodFeatures.cu gpu_memory_pool.cu
 
 run: example3_gpu
-	./example3_gpu
+	LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda-12/lib64:$$LD_LIBRARY_PATH ./example3_gpu
 
 profile: example3_gpu
-	nsys profile -o klt_gpu_profile --stats=true ./example3_gpu
+	LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda-12/lib64:$$LD_LIBRARY_PATH nsys profile -o klt_gpu_profile --stats=true ./example3_gpu
 	nsys stats --force-export=true klt_gpu_profile.nsys-rep > klt_gpu_stats.txt
 
 clean:
