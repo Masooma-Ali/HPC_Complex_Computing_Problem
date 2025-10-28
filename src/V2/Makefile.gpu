@@ -17,7 +17,7 @@ cpu_objs:
 	$(CC) -c -DNDEBUG -O3 error.c pnmio.c pyramid.c storeFeatures.c klt.c klt_util.c writeFeatures.c
 
 gpu_objs:
-	$(NVCC) -c -arch=$(ARCH) -O3 convolve.cu trackfeatures.cu selectGoodFeatures.cu
+	$(NVCC) -c -arch=$(ARCH) -O3 convole.cu trackfeatures.cu selectGoodFeatures.cu
 
 run: example3_gpu
 	./example3_gpu
