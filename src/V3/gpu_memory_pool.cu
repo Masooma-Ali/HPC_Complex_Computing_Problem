@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+// KLT_verbose declaration (defined in klt.c)
+extern "C" int KLT_verbose;
+
 #define cudaCheckError(ans) { cudaAssert((ans), __FILE__, __LINE__); }
 inline void cudaAssert(cudaError_t code, const char *file, int line)
 {
@@ -350,8 +353,4 @@ extern "C" void GPU_SetPyramidDims(int level, int ncols, int nrows)
         g_pool.pyramid_nrows[level] = nrows;
     }
 }
-
-// KLT_verbose declaration (should match klt.h)  
-// Defined in klt.c or selectGoodFeatures.c
-extern "C" int KLT_verbose;
 
