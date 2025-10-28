@@ -17,7 +17,7 @@ cpu_objs:
 	$(CC) -c -DNDEBUG -O3 error.c pnmio.c pyramid.c storeFeatures.c klt.c klt_util.c writeFeatures.c
 
 gpu_objs:
-	$(NVCC) -c -arch=$(ARCH) -O3 convolve.cu trackfeatures.cu selectGoodFeatures.cu
+	$(NVCC) -c -arch=$(ARCH) -O3 convolve.cu trackfeatures.cu selectGoodFeatures.cu gpu_memory_pool.cu
 
 run: example3_gpu
 	./example3_gpu
@@ -27,4 +27,4 @@ profile: example3_gpu
 	nsys stats --force-export=true klt_gpu_profile.nsys-rep > klt_gpu_stats.txt
 
 clean:
-	rm -f *.o libklt_gpu.a example3_gpu klt_gpu_profile* klt_gpu_stats.txt *.sqlite
+	rm -f *.o libklt_gpu.a example3_gpu klt_gpu_profile* klt_gpu_stats.txt *.sqlite feat*.ppm features.*

@@ -10,6 +10,11 @@ saved to a text file; each feature list is also written to a PPM file.
 #include "pnmio.h"
 #include "klt.h"
 
+// GPU memory pool functions
+extern int GPU_InitMemoryPool(int max_ncols, int max_nrows, int max_window_size);
+extern int GPU_InitMemoryPoolPyramid(int max_ncols, int max_nrows, int max_window_size, int n_levels);
+extern void GPU_FreeMemoryPool();
+
 /* #define REPLACE */
 
 #ifdef WIN32
@@ -37,6 +42,10 @@ int main()
   img1 = pgmReadFile("img0.pgm", NULL, &ncols, &nrows);
   img2 = (unsigned char *) malloc(ncols*nrows*sizeof(unsigned char));
 
+  // Initialize GPU memory pool with image dimensions, window size, and pyramid levels
+  // This enables: pinned memory, pyramid GPU buffers, and image persistence
+  GPU_InitMemoryPoolPyramid(ncols, nrows, tc->window_width, tc->nPyramidLevels);
+
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
   KLTStoreFeatureList(fl, ft, 0);
   KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, "feat0.ppm");
@@ -58,6 +67,10 @@ int main()
   KLTFreeFeatureTable(ft);
   KLTFreeFeatureList(fl);
   KLTFreeTrackingContext(tc);
+  
+  // Cleanup GPU memory pool
+  GPU_FreeMemoryPool();
+  
   free(img1);
   free(img2);
 
