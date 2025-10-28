@@ -380,9 +380,6 @@ __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
      }
  }
  
-// Global to track current pyramid level being processed
-static int g_current_pyramid_level = -1;
-
 void computeIntensityDifference_gpu(
     _KLT_FloatImage img1,
     _KLT_FloatImage img2,
@@ -395,52 +392,15 @@ void computeIntensityDifference_gpu(
     int nrows = img1->nrows;
     int diff_size = width * height * sizeof(float);
     
-    float *d_img1, *d_img2;
+    // Use pre-allocated buffers from memory pool (same as V2)
+    float *d_img1 = GPU_GetImageBuffer(0);  // img1
+    float *d_img2 = GPU_GetImageBuffer(1);  // img2  
     float *d_imgdiff = GPU_GetWindowBuffer(0, width, height);
     
-    // Use pyramid GPU buffers directly if available (no transfer!)
-    // Check if we're on a pyramid level that was uploaded to GPU
-    if (g_current_pyramid_level >= 0) {
-        d_img1 = GPU_GetPyramidImage(0, g_current_pyramid_level);
-        d_img2 = GPU_GetPyramidImage(1, g_current_pyramid_level);
-        
-        // If pyramid buffers exist, use them directly - NO TRANSFER NEEDED!
-        if (d_img1 && d_img2) {
-            // Skip all memory transfers - use GPU buffers directly
-        } else {
-            // Fallback to copying
-            d_img1 = GPU_GetImageBuffer(0);
-            d_img2 = GPU_GetImageBuffer(1);
-            int img_size = ncols * nrows * sizeof(float);
-            float *h_pinned1 = GPU_GetPinnedHostBuffer(0);
-            float *h_pinned2 = GPU_GetPinnedHostBuffer(1);
-            if (h_pinned1 && h_pinned2) {
-                memcpy(h_pinned1, img1->data, img_size);
-                memcpy(h_pinned2, img2->data, img_size);
-                cudaCheckError(cudaMemcpyAsync(d_img1, h_pinned1, img_size, cudaMemcpyHostToDevice));
-                cudaCheckError(cudaMemcpyAsync(d_img2, h_pinned2, img_size, cudaMemcpyHostToDevice));
-            } else {
-                cudaCheckError(cudaMemcpyAsync(d_img1, img1->data, img_size, cudaMemcpyHostToDevice));
-                cudaCheckError(cudaMemcpyAsync(d_img2, img2->data, img_size, cudaMemcpyHostToDevice));
-            }
-        }
-    } else {
-        // Not tracking pyramid levels, fall back to copying
-        d_img1 = GPU_GetImageBuffer(0);
-        d_img2 = GPU_GetImageBuffer(1);
-        int img_size = ncols * nrows * sizeof(float);
-        float *h_pinned1 = GPU_GetPinnedHostBuffer(0);
-        float *h_pinned2 = GPU_GetPinnedHostBuffer(1);
-        if (h_pinned1 && h_pinned2) {
-            memcpy(h_pinned1, img1->data, img_size);
-            memcpy(h_pinned2, img2->data, img_size);
-            cudaCheckError(cudaMemcpyAsync(d_img1, h_pinned1, img_size, cudaMemcpyHostToDevice));
-            cudaCheckError(cudaMemcpyAsync(d_img2, h_pinned2, img_size, cudaMemcpyHostToDevice));
-        } else {
-            cudaCheckError(cudaMemcpyAsync(d_img1, img1->data, img_size, cudaMemcpyHostToDevice));
-            cudaCheckError(cudaMemcpyAsync(d_img2, img2->data, img_size, cudaMemcpyHostToDevice));
-        }
-    }
+    // Copy to GPU - match V2 exactly (simple and correct)
+    int img_size = ncols * nrows * sizeof(float);
+    cudaCheckError(cudaMemcpyAsync(d_img1, img1->data, img_size, cudaMemcpyHostToDevice));
+    cudaCheckError(cudaMemcpyAsync(d_img2, img2->data, img_size, cudaMemcpyHostToDevice));
     
     dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
     dim3 gridDim((width + BLOCK_SIZE - 1) / BLOCK_SIZE,
@@ -472,70 +432,19 @@ void computeGradientSum_gpu(
     int img_size = ncols * nrows * sizeof(float);
     int grad_size = width * height * sizeof(float);
     
-    float *d_gradx1, *d_grady1, *d_gradx2, *d_grady2;
+    // Use pre-allocated buffers from memory pool (same as V2)
+    float *d_gradx1 = GPU_GetImageBuffer(2);  // gradx1
+    float *d_grady1 = GPU_GetImageBuffer(3);  // grady1
+    float *d_gradx2 = GPU_GetImageBuffer(4);  // gradx2
+    float *d_grady2 = GPU_GetImageBuffer(5);  // grady2
     float *d_gradx_out = GPU_GetWindowBuffer(1, width, height);
     float *d_grady_out = GPU_GetWindowBuffer(2, width, height);
     
-    // Use pyramid GPU buffers directly if available (no transfer!)
-    if (g_current_pyramid_level >= 0) {
-        d_gradx1 = GPU_GetPyramidGradX(0, g_current_pyramid_level);
-        d_grady1 = GPU_GetPyramidGradY(0, g_current_pyramid_level);
-        d_gradx2 = GPU_GetPyramidGradX(1, g_current_pyramid_level);
-        d_grady2 = GPU_GetPyramidGradY(1, g_current_pyramid_level);
-        
-        // If pyramid buffers exist, use them directly - NO TRANSFER NEEDED!
-        if (!(d_gradx1 && d_grady1 && d_gradx2 && d_grady2)) {
-            // Fallback to copying
-            d_gradx1 = GPU_GetImageBuffer(2);
-            d_grady1 = GPU_GetImageBuffer(3);
-            d_gradx2 = GPU_GetImageBuffer(4);
-            d_grady2 = GPU_GetImageBuffer(5);
-            float *h_pinned_gx1 = GPU_GetPinnedHostBuffer(2);
-            float *h_pinned_gy1 = GPU_GetPinnedHostBuffer(3);
-            float *h_pinned_gx2 = GPU_GetPinnedHostBuffer(4);
-            float *h_pinned_gy2 = GPU_GetPinnedHostBuffer(5);
-            if (h_pinned_gx1 && h_pinned_gy1 && h_pinned_gx2 && h_pinned_gy2) {
-                memcpy(h_pinned_gx1, gradx1->data, img_size);
-                memcpy(h_pinned_gy1, grady1->data, img_size);
-                memcpy(h_pinned_gx2, gradx2->data, img_size);
-                memcpy(h_pinned_gy2, grady2->data, img_size);
-                cudaCheckError(cudaMemcpyAsync(d_gradx1, h_pinned_gx1, img_size, cudaMemcpyHostToDevice));
-                cudaCheckError(cudaMemcpyAsync(d_grady1, h_pinned_gy1, img_size, cudaMemcpyHostToDevice));
-                cudaCheckError(cudaMemcpyAsync(d_gradx2, h_pinned_gx2, img_size, cudaMemcpyHostToDevice));
-                cudaCheckError(cudaMemcpyAsync(d_grady2, h_pinned_gy2, img_size, cudaMemcpyHostToDevice));
-            } else {
-                cudaCheckError(cudaMemcpyAsync(d_gradx1, gradx1->data, img_size, cudaMemcpyHostToDevice));
-                cudaCheckError(cudaMemcpyAsync(d_grady1, grady1->data, img_size, cudaMemcpyHostToDevice));
-                cudaCheckError(cudaMemcpyAsync(d_gradx2, gradx2->data, img_size, cudaMemcpyHostToDevice));
-                cudaCheckError(cudaMemcpyAsync(d_grady2, grady2->data, img_size, cudaMemcpyHostToDevice));
-            }
-        }
-    } else {
-        // Not tracking pyramid levels, fall back to copying
-        d_gradx1 = GPU_GetImageBuffer(2);
-        d_grady1 = GPU_GetImageBuffer(3);
-        d_gradx2 = GPU_GetImageBuffer(4);
-        d_grady2 = GPU_GetImageBuffer(5);
-        float *h_pinned_gx1 = GPU_GetPinnedHostBuffer(2);
-        float *h_pinned_gy1 = GPU_GetPinnedHostBuffer(3);
-        float *h_pinned_gx2 = GPU_GetPinnedHostBuffer(4);
-        float *h_pinned_gy2 = GPU_GetPinnedHostBuffer(5);
-        if (h_pinned_gx1 && h_pinned_gy1 && h_pinned_gx2 && h_pinned_gy2) {
-            memcpy(h_pinned_gx1, gradx1->data, img_size);
-            memcpy(h_pinned_gy1, grady1->data, img_size);
-            memcpy(h_pinned_gx2, gradx2->data, img_size);
-            memcpy(h_pinned_gy2, grady2->data, img_size);
-            cudaCheckError(cudaMemcpyAsync(d_gradx1, h_pinned_gx1, img_size, cudaMemcpyHostToDevice));
-            cudaCheckError(cudaMemcpyAsync(d_grady1, h_pinned_gy1, img_size, cudaMemcpyHostToDevice));
-            cudaCheckError(cudaMemcpyAsync(d_gradx2, h_pinned_gx2, img_size, cudaMemcpyHostToDevice));
-            cudaCheckError(cudaMemcpyAsync(d_grady2, h_pinned_gy2, img_size, cudaMemcpyHostToDevice));
-        } else {
-            cudaCheckError(cudaMemcpyAsync(d_gradx1, gradx1->data, img_size, cudaMemcpyHostToDevice));
-            cudaCheckError(cudaMemcpyAsync(d_grady1, grady1->data, img_size, cudaMemcpyHostToDevice));
-            cudaCheckError(cudaMemcpyAsync(d_gradx2, gradx2->data, img_size, cudaMemcpyHostToDevice));
-            cudaCheckError(cudaMemcpyAsync(d_grady2, grady2->data, img_size, cudaMemcpyHostToDevice));
-        }
-    }
+    // Copy to GPU - match V2 exactly (simple and correct)
+    cudaCheckError(cudaMemcpyAsync(d_gradx1, gradx1->data, img_size, cudaMemcpyHostToDevice));
+    cudaCheckError(cudaMemcpyAsync(d_grady1, grady1->data, img_size, cudaMemcpyHostToDevice));
+    cudaCheckError(cudaMemcpyAsync(d_gradx2, gradx2->data, img_size, cudaMemcpyHostToDevice));
+    cudaCheckError(cudaMemcpyAsync(d_grady2, grady2->data, img_size, cudaMemcpyHostToDevice));
     
     dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
     dim3 gridDim((width + BLOCK_SIZE - 1) / BLOCK_SIZE,
@@ -1008,9 +917,6 @@ void computeGradientSum_gpu(
                 xloc *= subsampling;  yloc *= subsampling;
                 xlocout *= subsampling;  ylocout *= subsampling;
                 
-                // Set current pyramid level for GPU functions to use buffers directly
-                g_current_pyramid_level = r;
-                
                 val = _trackFeature(xloc, yloc,
                                     &xlocout, &ylocout,
                                     pyramid1->img[r],
@@ -1028,9 +934,6 @@ void computeGradientSum_gpu(
                 if (val==KLT_SMALL_DET || val==KLT_OOB)
                     break;
             }
-            
-            // Reset pyramid level after feature tracking
-            g_current_pyramid_level = -1;
              
              /* Record feature */
              if (val == KLT_OOB) {
