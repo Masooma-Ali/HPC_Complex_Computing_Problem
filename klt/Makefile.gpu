@@ -1,4 +1,4 @@
-# GPU-accelerated KLT Makefile
+# GPU-accelerated KLT Makefile (Colab-optimized)
 CC = gcc
 NVCC = nvcc
 ARCH = sm_75
@@ -17,14 +17,13 @@ cpu_objs:
 	$(CC) -c -DNDEBUG -O3 error.c pnmio.c pyramid.c storeFeatures.c klt.c klt_util.c writeFeatures.c
 
 gpu_objs:
-	$(NVCC) -c -arch=$(ARCH) -O3 convolve.cu trackfeatures.cu selectGoodFeatures.cu
+	$(NVCC) -c -arch=$(ARCH) -O3 convolve.cu trackFeatures.cu selectGoodFeatures.cu
 
 run: example3_gpu
 	./example3_gpu
 
 profile: example3_gpu
-	nsys profile -o klt_gpu_profile --stats=true ./example3_gpu
-	nsys stats --force-export=true klt_gpu_profile.nsys-rep > klt_gpu_stats.txt
+	nvprof --print-gpu-trace --print-api-trace ./example3_gpu > klt_gpu_profile.txt 2>&1
 
 clean:
 	rm -f *.o libklt_gpu.a example3_gpu klt_gpu_profile* klt_gpu_stats.txt *.sqlite
