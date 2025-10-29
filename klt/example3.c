@@ -35,7 +35,7 @@ int main()
   tc->affineConsistencyCheck = -1;  /* set this to 2 to turn on affine consistency check */
  
   // ---- load first image from your dataset ----
-  img1 = pgmReadFile("src/V1-1/images_dataset/frame_0000.pgm", NULL, &ncols, &nrows);
+  img1 = pgmReadFile("src/V1-1/images_dataset/frame_0001.pgm", NULL, &ncols, &nrows);
   img2 = (unsigned char *) malloc(ncols * nrows * sizeof(unsigned char));
 
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
