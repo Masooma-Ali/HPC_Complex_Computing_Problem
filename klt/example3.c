@@ -1,6 +1,6 @@
 /**********************************************************************
 Finds the 150 best features in an image and tracks them through the 
-next two images.  The sequential mode is set in order to speed
+next 167 images.  The sequential mode is set in order to speed
 processing.  The features are stored in a feature table, which is then
 saved to a text file; each feature list is also written to a PPM file.
 **********************************************************************/
@@ -19,11 +19,11 @@ int main()
 #endif
 {
   unsigned char *img1, *img2;
-  char fnamein[100], fnameout[100];
+  char fnamein[200], fnameout[200];
   KLT_TrackingContext tc;
   KLT_FeatureList fl;
   KLT_FeatureTable ft;
-  int nFeatures = 150, nFrames = 10;
+  int nFeatures = 150, nFrames = 168;   // changed from 10 → 168
   int ncols, nrows;
   int i;
 
@@ -34,15 +34,17 @@ int main()
   tc->writeInternalImages = FALSE;
   tc->affineConsistencyCheck = -1;  /* set this to 2 to turn on affine consistency check */
  
-  img1 = pgmReadFile("img0.pgm", NULL, &ncols, &nrows);
-  img2 = (unsigned char *) malloc(ncols*nrows*sizeof(unsigned char));
+  // ---- load first image from your dataset ----
+  img1 = pgmReadFile("src/V1-1/images_dataset/frame_0000.pgm", NULL, &ncols, &nrows);
+  img2 = (unsigned char *) malloc(ncols * nrows * sizeof(unsigned char));
 
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
   KLTStoreFeatureList(fl, ft, 0);
   KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, "feat0.ppm");
 
+  // ---- track through all 168 frames ----
   for (i = 1 ; i < nFrames ; i++)  {
-    sprintf(fnamein, "img%d.pgm", i);
+    sprintf(fnamein, "images_dataset/frame_%04d.pgm", i);
     pgmReadFile(fnamein, img2, &ncols, &nrows);
     KLTTrackFeatures(tc, img1, img2, ncols, nrows, fl);
 #ifdef REPLACE
@@ -52,6 +54,7 @@ int main()
     sprintf(fnameout, "feat%d.ppm", i);
     KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
   }
+
   KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
   KLTWriteFeatureTable(ft, "features.ft", NULL);
 
@@ -63,4 +66,3 @@ int main()
 
   return 0;
 }
-
