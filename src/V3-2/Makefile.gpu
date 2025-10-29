@@ -1,0 +1,43 @@
+# GPU-accelerated KLT Makefile - Simple Version
+CC = gcc
+NVCC = nvcc
+ARCH = sm_75
+
+.PHONY: all clean run profile help
+
+all: example3_gpu
+
+example3_gpu: libklt_gpu.a
+	$(NVCC) -arch=$(ARCH) -O3 -o example3_gpu example3.c -L. -lklt_gpu -lm
+
+libklt_gpu.a: cpu_objs gpu_objs
+	ar ruv libklt_gpu.a *.o
+
+cpu_objs:
+	$(CC) -c -DNDEBUG -O3 error.c pnmio.c pyramid.c storeFeatures.c klt.c klt_util.c writeFeatures.c
+
+gpu_objs:
+	$(NVCC) -c -arch=$(ARCH) -O3 convole.cu trackfeatures.cu selectGoodFeatures.cu
+
+run: example3_gpu
+	./example3_gpu
+
+profile: example3_gpu
+	@echo "Profiling..." ;\
+	nsys profile --force-overwrite=true --trace=cuda --output gpu_profile ./example3_gpu > /dev/null 2>&1 ;\
+	echo "Profile complete. Data:" ;\
+	nsys stats gpu_profile.nsys-rep --force-export=true
+
+clean:
+	rm -f *.o libklt_gpu.a example3_gpu gpu_profile.* *.sqlite feat*.ppm features.* 2>/dev/null; \
+	@echo "✓ Cleaned"
+
+help:
+	@echo "V3-2 GPU Makefile - Simple Build & Profile" ;\
+	@echo "" ;\
+	@echo "Targets:" ;\
+	@echo "  make all      - Build GPU executable" ;\
+	@echo "  make run      - Run example" ;\
+	@echo "  make profile  - Profile with timing summary" ;\
+	@echo "  make clean    - Clean artifacts" ;\
+	@echo "  make help     - Show this help"
