@@ -124,7 +124,7 @@ extern "C" void _KLTGetKernelWidths(
     *gaussderiv_width = gaussderiv_kernel.width;
 }
 
-// Optimization 3, 4, 5: Horizontal kernel with shared memory, coalescing, and ILP
+// Optimization 3, 4, 5: Horizontal kernel - SIMPLIFIED GLOBAL MEMORY VERSION
 __global__ void convolveHorizontalKernel(
     float *input,
     float *output,
@@ -133,59 +133,26 @@ __global__ void convolveHorizontalKernel(
     int ncols,
     int nrows)
 {
-    extern __shared__ float shared_row[];
-    
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int tx = threadIdx.x;
-    int radius = kernel_width / 2;
-    
-    // Load data into shared memory with halo regions - CORRECTED VERSION
-    if (row < nrows) {
-        // Each thread loads its main data element
-        if (col < ncols) {
-            shared_row[tx + radius] = __ldg(&input[row * ncols + col]);
-        } else {
-            shared_row[tx + radius] = 0.0f;  // Boundary padding
-        }
-        
-        // Left halo: threads 0 to radius-1 load left boundary
-        if (tx < radius) {
-            int halo_col = col - radius;
-            if (halo_col >= 0) {
-                shared_row[tx] = __ldg(&input[row * ncols + halo_col]);
-            } else {
-                shared_row[tx] = 0.0f;  // Out of bounds - padding with 0
-            }
-        }
-        
-        // Right halo: threads blockDim.x-radius to blockDim.x-1 load right boundary
-        if (tx >= blockDim.x - radius) {
-            int right_col = col + radius;
-            if (right_col < ncols) {
-                shared_row[tx + 2 * radius] = __ldg(&input[row * ncols + right_col]);
-            } else {
-                shared_row[tx + 2 * radius] = 0.0f;  // Out of bounds - padding with 0
-            }
-        }
-    }
-    
-    __syncthreads();
     
     if (row >= nrows || col >= ncols) return;
     
+    int radius = kernel_width / 2;
     int idx = row * ncols + col;
     
+    // Boundary check - set to 0 at edges
     if (col < radius || col >= ncols - radius) {
         output[idx] = 0.0f;
         return;
     }
     
-    // Optimization 4, 5: Loop unrolling with ILP
+    // Optimization 4, 5: Loop unrolling with ILP and __ldg() for cached reads
     float sum = 0.0f;
     #pragma unroll 4
     for (int k = 0; k < kernel_width; k++) {
-        sum += shared_row[tx + k] * kernel[kernel_width - 1 - k];
+        int pos = row * ncols + (col - radius + k);
+        sum += __ldg(&input[pos]) * kernel[kernel_width - 1 - k];
     }
     
     output[idx] = sum;
@@ -247,10 +214,7 @@ static void _convolveImageHoriz(
     dim3 gridDim((ncols + BLOCK_SIZE - 1) / BLOCK_SIZE, 
                  (nrows + BLOCK_SIZE - 1) / BLOCK_SIZE);
     
-    // Optimization 2: Calculate shared memory with padding
-    int shared_mem_size = (BLOCK_SIZE + kernel.width + SHARED_PADDING) * sizeof(float);
-    
-    convolveHorizontalKernel<<<gridDim, blockDim, shared_mem_size>>>
+    convolveHorizontalKernel<<<gridDim, blockDim>>>
         (d_input, d_output, d_kernel, kernel.width, ncols, nrows);
     
     cudaCheckError(cudaDeviceSynchronize());
