@@ -58,14 +58,18 @@ __global__ void computeMinEigenvaluesKernel(
     
     if (x >= ncols - borderx || y >= nrows - bordery) return;
     
-    // Compute gradients sum in window
+    // Compute gradients sum in window - OPTIMIZED WITH __ldg()
     float gxx = 0.0f, gxy = 0.0f, gyy = 0.0f;
     
+    // Unroll window loop for better parallelism indication
+    #pragma unroll 4
     for (int yy = y - window_hh; yy <= y + window_hh; yy++) {
+        #pragma unroll 4
         for (int xx = x - window_hw; xx <= x + window_hw; xx++) {
             int idx = yy * ncols + xx;
-            float gx = gradx[idx];
-            float gy = grady[idx];
+            // Use __ldg() for cached L1 reads on gradient images
+            float gx = __ldg(&gradx[idx]);
+            float gy = __ldg(&grady[idx]);
             gxx += gx * gx;
             gxy += gx * gy;
             gyy += gy * gy;
@@ -97,7 +101,8 @@ __global__ void toFloatImageKernel(
     if (x >= ncols || y >= nrows) return;
     
     int idx = y * ncols + x;
-    floatimg[idx] = (float)img[idx];
+    // Use __ldg() for cached read of input image
+    floatimg[idx] = (float)__ldg(&img[idx]);
 }
 
 /*********************************************************************

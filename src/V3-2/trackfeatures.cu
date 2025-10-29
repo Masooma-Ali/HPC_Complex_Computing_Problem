@@ -51,10 +51,11 @@
      
      float *ptr = img_data + (ncols*yt) + xt;
      
-     return ((1-ax) * (1-ay) * ptr[0] +
-             ax * (1-ay) * ptr[1] +
-             (1-ax) * ay * ptr[ncols] +
-             ax * ay * ptr[ncols+1]);
+     // Use __ldg() for cached reads - improves L1 cache utilization
+     return ((1-ax) * (1-ay) * __ldg(ptr) +
+             ax * (1-ay) * __ldg(ptr+1) +
+             (1-ax) * ay * __ldg(ptr+ncols) +
+             ax * ay * __ldg(ptr+ncols+1));
  }
  
  __global__ void computeIntensityDifferenceKernel(
