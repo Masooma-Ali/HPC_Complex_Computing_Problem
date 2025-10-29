@@ -1,5 +1,5 @@
 /*********************************************************************
- * trackFeatures.cu - CUDA GPU-accelerated version
+ * trackFeatures.cu - CUDA GPU-accelerated version (OPTIMIZED)
  * Complete implementation with CPU wrapper functions
  *********************************************************************/
 
@@ -19,21 +19,82 @@
  }
  
  extern int KLT_verbose;
- 
- #define BLOCK_SIZE 16
- #define MAX_FEATURES 1000
- 
- typedef float *_FloatWindow;
- 
- #define cudaCheckError(ans) { cudaAssert((ans), __FILE__, __LINE__); }
- inline void cudaAssert(cudaError_t code, const char *file, int line)
- {
-     if (code != cudaSuccess) {
-         fprintf(stderr, "cuda error: %s %s %d\n", cudaGetErrorString(code), file, line);
-         exit(code);
-     }
- }
- 
+
+#define BLOCK_SIZE 16
+#define MAX_FEATURES 1000
+
+// CUDA error checking macro and helper function
+#define cudaCheckError(ans) { cudaAssert((ans), __FILE__, __LINE__); }
+inline void cudaAssert(cudaError_t code, const char *file, int line)
+{
+    if (code != cudaSuccess) {
+        fprintf(stderr, "cuda error: %s %s %d\n", cudaGetErrorString(code), file, line);
+        exit(code);
+    }
+}
+
+// OPTIMIZATION: GPU Memory Pool for persistent allocation
+typedef struct {
+    float *d_img_buffer;           // Reusable for input images
+    float *d_diff_buffer;          // Reusable for difference windows  
+    float *d_temp_buffer;          // Reusable for temporary data
+    cudaStream_t stream;           // For async operations
+    int allocated_img_size;        // Maximum image buffer size
+    int allocated_diff_size;       // Maximum difference buffer size
+    int initialized;               // Flag to check if initialized
+} GPUTrackingMemoryPool;
+
+static GPUTrackingMemoryPool gpu_tracking_pool = {NULL, NULL, NULL, NULL, 0, 0, 0};
+
+// OPTIMIZATION: Initialize GPU memory pool (allocate once, reuse forever)
+void _initTrackingGPUPool(int img_width, int img_height, int max_window_size)
+{
+    int img_size = img_width * img_height * sizeof(float);
+    int diff_size = max_window_size * max_window_size * sizeof(float);
+    
+    // Check if we need to reallocate
+    if (!gpu_tracking_pool.initialized || 
+        gpu_tracking_pool.allocated_img_size < img_size ||
+        gpu_tracking_pool.allocated_diff_size < diff_size) {
+        
+        // Free old allocations if they exist
+        if (gpu_tracking_pool.d_img_buffer) cudaFree(gpu_tracking_pool.d_img_buffer);
+        if (gpu_tracking_pool.d_diff_buffer) cudaFree(gpu_tracking_pool.d_diff_buffer);
+        if (gpu_tracking_pool.d_temp_buffer) cudaFree(gpu_tracking_pool.d_temp_buffer);
+        if (gpu_tracking_pool.stream) cudaStreamDestroy(gpu_tracking_pool.stream);
+        
+        // Allocate persistent GPU memory (allocate once!)
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_img_buffer, img_size * 4)); // For 4 gradient images
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_diff_buffer, diff_size));
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_temp_buffer, diff_size));
+        
+        // Create stream for async operations
+        cudaCheckError(cudaStreamCreate(&gpu_tracking_pool.stream));
+        
+        gpu_tracking_pool.allocated_img_size = img_size;
+        gpu_tracking_pool.allocated_diff_size = diff_size;
+        gpu_tracking_pool.initialized = 1;
+    }
+}
+
+// OPTIMIZATION: Cleanup GPU pool
+void _cleanupTrackingGPUPool()
+{
+    if (gpu_tracking_pool.initialized) {
+        if (gpu_tracking_pool.d_img_buffer) cudaFree(gpu_tracking_pool.d_img_buffer);
+        if (gpu_tracking_pool.d_diff_buffer) cudaFree(gpu_tracking_pool.d_diff_buffer);
+        if (gpu_tracking_pool.d_temp_buffer) cudaFree(gpu_tracking_pool.d_temp_buffer);
+        if (gpu_tracking_pool.stream) cudaStreamDestroy(gpu_tracking_pool.stream);
+        
+        gpu_tracking_pool.d_img_buffer = NULL;
+        gpu_tracking_pool.d_diff_buffer = NULL;
+        gpu_tracking_pool.d_temp_buffer = NULL;
+        gpu_tracking_pool.initialized = 0;
+    }
+}
+
+typedef float *_FloatWindow;
+
  __device__ float interpolate_gpu(
      float x,
      float y,
@@ -51,10 +112,11 @@
      
      float *ptr = img_data + (ncols*yt) + xt;
      
-     return ((1-ax) * (1-ay) * ptr[0] +
-             ax * (1-ay) * ptr[1] +
-             (1-ax) * ay * ptr[ncols] +
-             ax * ay * ptr[ncols+1]);
+     // Use __ldg() for cached reads - improves L1 cache utilization
+     return ((1-ax) * (1-ay) * __ldg(ptr) +
+             ax * (1-ay) * __ldg(ptr+1) +
+             (1-ax) * ay * __ldg(ptr+ncols) +
+             ax * ay * __ldg(ptr+ncols+1));
  }
  
  __global__ void computeIntensityDifferenceKernel(
@@ -268,28 +330,32 @@ __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
      int img_size = ncols * nrows * sizeof(float);
      int diff_size = width * height * sizeof(float);
      
-     float *d_img1, *d_img2, *d_imgdiff;
+     // OPTIMIZATION: Initialize GPU memory pool (allocate once!)
+     _initTrackingGPUPool(ncols, nrows, width > height ? width : height);
      
-     cudaCheckError(cudaMalloc(&d_img1, img_size));
-     cudaCheckError(cudaMalloc(&d_img2, img_size));
-     cudaCheckError(cudaMalloc(&d_imgdiff, diff_size));
-     
-     cudaCheckError(cudaMemcpy(d_img1, img1->data, img_size, cudaMemcpyHostToDevice));
-     cudaCheckError(cudaMemcpy(d_img2, img2->data, img_size, cudaMemcpyHostToDevice));
+     // OPTIMIZATION: Use async H2D transfers
+     cudaCheckError(cudaMemcpyAsync(gpu_tracking_pool.d_img_buffer, img1->data, img_size, 
+                                    cudaMemcpyHostToDevice, gpu_tracking_pool.stream));
+     cudaCheckError(cudaMemcpyAsync(gpu_tracking_pool.d_img_buffer + (ncols * nrows), 
+                                    img2->data, img_size, 
+                                    cudaMemcpyHostToDevice, gpu_tracking_pool.stream));
      
      dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
      dim3 gridDim((width + BLOCK_SIZE - 1) / BLOCK_SIZE,
                   (height + BLOCK_SIZE - 1) / BLOCK_SIZE);
      
-     computeIntensityDifferenceKernel<<<gridDim, blockDim>>>(
-         d_img1, d_img2, x1, y1, x2, y2, width, height, ncols, nrows, d_imgdiff);
+     // Launch kernel on stream
+     computeIntensityDifferenceKernel<<<gridDim, blockDim, 0, gpu_tracking_pool.stream>>>(
+         gpu_tracking_pool.d_img_buffer, 
+         gpu_tracking_pool.d_img_buffer + (ncols * nrows),
+         x1, y1, x2, y2, width, height, ncols, nrows, gpu_tracking_pool.d_diff_buffer);
      
-     cudaCheckError(cudaDeviceSynchronize());
-     cudaCheckError(cudaMemcpy(imgdiff, d_imgdiff, diff_size, cudaMemcpyDeviceToHost));
+     // OPTIMIZATION: Async D2H transfer
+     cudaCheckError(cudaMemcpyAsync(imgdiff, gpu_tracking_pool.d_diff_buffer, diff_size, 
+                                    cudaMemcpyDeviceToHost, gpu_tracking_pool.stream));
      
-     cudaFree(d_img1);
-     cudaFree(d_img2);
-     cudaFree(d_imgdiff);
+     // Synchronize this stream only (not entire GPU)
+     cudaCheckError(cudaStreamSynchronize(gpu_tracking_pool.stream));
  }
  
  void computeGradientSum_gpu(
@@ -308,40 +374,44 @@ __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
      int img_size = ncols * nrows * sizeof(float);
      int grad_size = width * height * sizeof(float);
      
-     float *d_gradx1, *d_grady1, *d_gradx2, *d_grady2;
-     float *d_gradx_out, *d_grady_out;
+     // OPTIMIZATION: Initialize GPU memory pool
+     _initTrackingGPUPool(ncols, nrows, width > height ? width : height);
      
-     cudaCheckError(cudaMalloc(&d_gradx1, img_size));
-     cudaCheckError(cudaMalloc(&d_grady1, img_size));
-     cudaCheckError(cudaMalloc(&d_gradx2, img_size));
-     cudaCheckError(cudaMalloc(&d_grady2, img_size));
-     cudaCheckError(cudaMalloc(&d_gradx_out, grad_size));
-     cudaCheckError(cudaMalloc(&d_grady_out, grad_size));
+     // OPTIMIZATION: Use async transfers with pointer arithmetic for 4 images
+     // Buffer layout: [gradx1][grady1][gradx2][grady2][outputs...]
+     float *d_grady1_offset = gpu_tracking_pool.d_img_buffer + (ncols * nrows);
+     float *d_gradx2_offset = gpu_tracking_pool.d_img_buffer + (2 * ncols * nrows);
+     float *d_grady2_offset = gpu_tracking_pool.d_img_buffer + (3 * ncols * nrows);
+     float *d_gradx_out = gpu_tracking_pool.d_diff_buffer;
+     float *d_grady_out = gpu_tracking_pool.d_temp_buffer;
      
-     cudaCheckError(cudaMemcpy(d_gradx1, gradx1->data, img_size, cudaMemcpyHostToDevice));
-     cudaCheckError(cudaMemcpy(d_grady1, grady1->data, img_size, cudaMemcpyHostToDevice));
-     cudaCheckError(cudaMemcpy(d_gradx2, gradx2->data, img_size, cudaMemcpyHostToDevice));
-     cudaCheckError(cudaMemcpy(d_grady2, grady2->data, img_size, cudaMemcpyHostToDevice));
+     cudaCheckError(cudaMemcpyAsync(gpu_tracking_pool.d_img_buffer, gradx1->data, img_size, 
+                                    cudaMemcpyHostToDevice, gpu_tracking_pool.stream));
+     cudaCheckError(cudaMemcpyAsync(d_grady1_offset, grady1->data, img_size, 
+                                    cudaMemcpyHostToDevice, gpu_tracking_pool.stream));
+     cudaCheckError(cudaMemcpyAsync(d_gradx2_offset, gradx2->data, img_size, 
+                                    cudaMemcpyHostToDevice, gpu_tracking_pool.stream));
+     cudaCheckError(cudaMemcpyAsync(d_grady2_offset, grady2->data, img_size, 
+                                    cudaMemcpyHostToDevice, gpu_tracking_pool.stream));
      
      dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
      dim3 gridDim((width + BLOCK_SIZE - 1) / BLOCK_SIZE,
                   (height + BLOCK_SIZE - 1) / BLOCK_SIZE);
      
-     computeGradientSumKernel<<<gridDim, blockDim>>>(
-         d_gradx1, d_grady1, d_gradx2, d_grady2,
+     // Launch kernel on stream
+     computeGradientSumKernel<<<gridDim, blockDim, 0, gpu_tracking_pool.stream>>>(
+         gpu_tracking_pool.d_img_buffer, d_grady1_offset, d_gradx2_offset, d_grady2_offset,
          x1, y1, x2, y2, width, height, ncols, nrows,
          d_gradx_out, d_grady_out);
      
-     cudaCheckError(cudaDeviceSynchronize());
-     cudaCheckError(cudaMemcpy(gradx, d_gradx_out, grad_size, cudaMemcpyDeviceToHost));
-     cudaCheckError(cudaMemcpy(grady, d_grady_out, grad_size, cudaMemcpyDeviceToHost));
+     // OPTIMIZATION: Async D2H transfers
+     cudaCheckError(cudaMemcpyAsync(gradx, d_gradx_out, grad_size, 
+                                    cudaMemcpyDeviceToHost, gpu_tracking_pool.stream));
+     cudaCheckError(cudaMemcpyAsync(grady, d_grady_out, grad_size, 
+                                    cudaMemcpyDeviceToHost, gpu_tracking_pool.stream));
      
-     cudaFree(d_gradx1);
-     cudaFree(d_grady1);
-     cudaFree(d_gradx2);
-     cudaFree(d_grady2);
-     cudaFree(d_gradx_out);
-     cudaFree(d_grady_out);
+     // Synchronize stream only
+     cudaCheckError(cudaStreamSynchronize(gpu_tracking_pool.stream));
  }
  
  void computeIntensityDifferenceLightingInsensitive_gpu(
@@ -850,6 +920,12 @@ __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
                  KLTCountRemainingFeatures(featurelist));
          fflush(stderr);
      }
+ }
+ 
+ // OPTIMIZATION: Cleanup GPU tracking pool (call at program end)
+ extern "C" void _KLTTrackingFeaturesCleanup()
+ {
+     _cleanupTrackingGPUPool();
  }
  
  
