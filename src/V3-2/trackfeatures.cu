@@ -33,18 +33,27 @@ inline void cudaAssert(cudaError_t code, const char *file, int line)
     }
 }
 
-// OPTIMIZATION: GPU Memory Pool for persistent allocation
+// OPTIMIZATION: GPU Memory Pool for persistent allocation - BATCHED VERSION
 typedef struct {
     float *d_img_buffer;           // Reusable for input images
     float *d_diff_buffer;          // Reusable for difference windows  
     float *d_temp_buffer;          // Reusable for temporary data
+    // NEW: Pyramid storage on GPU
+    float *d_pyramid1_imgs[10];    // Store all pyramid levels on GPU
+    float *d_pyramid1_gradx[10];
+    float *d_pyramid1_grady[10];
+    float *d_pyramid2_imgs[10];
+    float *d_pyramid2_gradx[10];
+    float *d_pyramid2_grady[10];
+    int pyramid_levels;
     cudaStream_t stream;           // For async operations
     int allocated_img_size;        // Maximum image buffer size
     int allocated_diff_size;       // Maximum difference buffer size
     int initialized;               // Flag to check if initialized
 } GPUTrackingMemoryPool;
 
-static GPUTrackingMemoryPool gpu_tracking_pool = {NULL, NULL, NULL, NULL, 0, 0, 0};
+static GPUTrackingMemoryPool gpu_tracking_pool = {NULL, NULL, NULL, NULL, 
+    {}, {}, {}, {}, {}, {}, 0, 0, 0, 0};
 
 // OPTIMIZATION: Initialize GPU memory pool (allocate once, reuse forever)
 void _initTrackingGPUPool(int img_width, int img_height, int max_window_size)
@@ -86,10 +95,61 @@ void _cleanupTrackingGPUPool()
         if (gpu_tracking_pool.d_temp_buffer) cudaFree(gpu_tracking_pool.d_temp_buffer);
         if (gpu_tracking_pool.stream) cudaStreamDestroy(gpu_tracking_pool.stream);
         
+        // Free pyramid storage
+        for (int i = 0; i < gpu_tracking_pool.pyramid_levels; i++) {
+            if (gpu_tracking_pool.d_pyramid1_imgs[i]) cudaFree(gpu_tracking_pool.d_pyramid1_imgs[i]);
+            if (gpu_tracking_pool.d_pyramid1_gradx[i]) cudaFree(gpu_tracking_pool.d_pyramid1_gradx[i]);
+            if (gpu_tracking_pool.d_pyramid1_grady[i]) cudaFree(gpu_tracking_pool.d_pyramid1_grady[i]);
+            if (gpu_tracking_pool.d_pyramid2_imgs[i]) cudaFree(gpu_tracking_pool.d_pyramid2_imgs[i]);
+            if (gpu_tracking_pool.d_pyramid2_gradx[i]) cudaFree(gpu_tracking_pool.d_pyramid2_gradx[i]);
+            if (gpu_tracking_pool.d_pyramid2_grady[i]) cudaFree(gpu_tracking_pool.d_pyramid2_grady[i]);
+        }
+        
         gpu_tracking_pool.d_img_buffer = NULL;
         gpu_tracking_pool.d_diff_buffer = NULL;
         gpu_tracking_pool.d_temp_buffer = NULL;
         gpu_tracking_pool.initialized = 0;
+    }
+}
+
+// NEW: Upload pyramids to GPU once
+void _uploadPyramidsToGPU(_KLT_Pyramid pyr1, _KLT_Pyramid pyr1_gradx, _KLT_Pyramid pyr1_grady,
+                          _KLT_Pyramid pyr2, _KLT_Pyramid pyr2_gradx, _KLT_Pyramid pyr2_grady,
+                          int nlevels)
+{
+    // Free old pyramid data if exists
+    for (int i = 0; i < gpu_tracking_pool.pyramid_levels; i++) {
+        if (gpu_tracking_pool.d_pyramid1_imgs[i]) cudaFree(gpu_tracking_pool.d_pyramid1_imgs[i]);
+        if (gpu_tracking_pool.d_pyramid1_gradx[i]) cudaFree(gpu_tracking_pool.d_pyramid1_gradx[i]);
+        if (gpu_tracking_pool.d_pyramid1_grady[i]) cudaFree(gpu_tracking_pool.d_pyramid1_grady[i]);
+        if (gpu_tracking_pool.d_pyramid2_imgs[i]) cudaFree(gpu_tracking_pool.d_pyramid2_imgs[i]);
+        if (gpu_tracking_pool.d_pyramid2_gradx[i]) cudaFree(gpu_tracking_pool.d_pyramid2_gradx[i]);
+        if (gpu_tracking_pool.d_pyramid2_grady[i]) cudaFree(gpu_tracking_pool.d_pyramid2_grady[i]);
+    }
+    
+    gpu_tracking_pool.pyramid_levels = nlevels;
+    
+    // Upload all pyramid levels to GPU
+    for (int i = 0; i < nlevels; i++) {
+        int ncols = pyr1->ncols[i];
+        int nrows = pyr1->nrows[i];
+        int size = ncols * nrows * sizeof(float);
+        
+        // Allocate GPU memory for this level
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_pyramid1_imgs[i], size));
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_pyramid1_gradx[i], size));
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_pyramid1_grady[i], size));
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_pyramid2_imgs[i], size));
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_pyramid2_gradx[i], size));
+        cudaCheckError(cudaMalloc(&gpu_tracking_pool.d_pyramid2_grady[i], size));
+        
+        // Upload data (synchronous for now - will optimize later)
+        cudaCheckError(cudaMemcpy(gpu_tracking_pool.d_pyramid1_imgs[i], pyr1->img[i]->data, size, cudaMemcpyHostToDevice));
+        cudaCheckError(cudaMemcpy(gpu_tracking_pool.d_pyramid1_gradx[i], pyr1_gradx->img[i]->data, size, cudaMemcpyHostToDevice));
+        cudaCheckError(cudaMemcpy(gpu_tracking_pool.d_pyramid1_grady[i], pyr1_grady->img[i]->data, size, cudaMemcpyHostToDevice));
+        cudaCheckError(cudaMemcpy(gpu_tracking_pool.d_pyramid2_imgs[i], pyr2->img[i]->data, size, cudaMemcpyHostToDevice));
+        cudaCheckError(cudaMemcpy(gpu_tracking_pool.d_pyramid2_gradx[i], pyr2_gradx->img[i]->data, size, cudaMemcpyHostToDevice));
+        cudaCheckError(cudaMemcpy(gpu_tracking_pool.d_pyramid2_grady[i], pyr2_grady->img[i]->data, size, cudaMemcpyHostToDevice));
     }
 }
 
@@ -234,6 +294,120 @@ __global__ void computeWindowStatisticsKernel(
         float mean_sq = sum_sq_shared[0] / n;
         *variance_out = mean_sq - (*mean_out) * (*mean_out);
     }
+}
+
+// NEW: BATCHED tracking kernel - processes all features in parallel
+__global__ void trackFeaturesBatchedKernel(
+    float *d_img1, float *d_img2,
+    float *d_gradx1, float *d_grady1,
+    float *d_gradx2, float *d_grady2,
+    float *x1_arr, float *y1_arr,      // Input positions for all features
+    float *x2_arr, float *y2_arr,      // Output positions for all features
+    int *status_arr,                    // Output status for each feature
+    int num_features,
+    int width, int height,
+    int ncols, int nrows,
+    float step_factor, int max_iterations,
+    float small, float th, float max_residue)
+{
+    int feat_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (feat_idx >= num_features) return;
+    
+    // Each thread tracks one feature
+    float x1 = x1_arr[feat_idx];
+    float y1 = y1_arr[feat_idx];
+    float x2 = x2_arr[feat_idx];
+    float y2 = y2_arr[feat_idx];
+    
+    int hw = width / 2;
+    int hh = height / 2;
+    float one_plus_eps = 1.001f;
+    int iteration = 0;
+    int status = KLT_TRACKED;
+    float dx, dy;
+    
+    // Newton-Raphson iteration loop ON GPU
+    do {
+        // Boundary check
+        if (x1 - hw < 0.0f || ncols - (x1 + hw) < one_plus_eps ||
+            x2 - hw < 0.0f || ncols - (x2 + hw) < one_plus_eps ||
+            y1 - hh < 0.0f || nrows - (y1 + hh) < one_plus_eps ||
+            y2 - hh < 0.0f || nrows - (y2 + hh) < one_plus_eps) {
+            status = KLT_OOB;
+            break;
+        }
+        
+        // Compute gradient matrix and error vector ON GPU
+        float gxx = 0.0f, gxy = 0.0f, gyy = 0.0f;
+        float ex = 0.0f, ey = 0.0f;
+        
+        for (int j = -hh; j <= hh; j++) {
+            for (int i = -hw; i <= hw; i++) {
+                float g1 = interpolate_gpu(x1 + i, y1 + j, d_img1, ncols, nrows);
+                float g2 = interpolate_gpu(x2 + i, y2 + j, d_img2, ncols, nrows);
+                float diff = g1 - g2;
+                
+                float gx = (interpolate_gpu(x1 + i, y1 + j, d_gradx1, ncols, nrows) +
+                           interpolate_gpu(x2 + i, y2 + j, d_gradx2, ncols, nrows)) * 0.5f;
+                float gy = (interpolate_gpu(x1 + i, y1 + j, d_grady1, ncols, nrows) +
+                           interpolate_gpu(x2 + i, y2 + j, d_grady2, ncols, nrows)) * 0.5f;
+                
+                gxx += gx * gx;
+                gxy += gx * gy;
+                gyy += gy * gy;
+                ex += diff * gx;
+                ey += diff * gy;
+            }
+        }
+        
+        ex *= step_factor;
+        ey *= step_factor;
+        
+        // Solve equation
+        float det = gxx * gyy - gxy * gxy;
+        if (det < small) {
+            status = KLT_SMALL_DET;
+            break;
+        }
+        
+        dx = (gyy * ex - gxy * ey) / det;
+        dy = (gxx * ey - gxy * ex) / det;
+        
+        x2 += dx;
+        y2 += dy;
+        iteration++;
+        
+    } while ((fabsf(dx) >= th || fabsf(dy) >= th) && iteration < max_iterations);
+    
+    // Final boundary check
+    if (x2 - hw < 0.0f || ncols - (x2 + hw) < one_plus_eps ||
+        y2 - hh < 0.0f || nrows - (y2 + hh) < one_plus_eps) {
+        status = KLT_OOB;
+    }
+    
+    // Check residue if tracked
+    if (status == KLT_TRACKED) {
+        float sum_abs_diff = 0.0f;
+        for (int j = -hh; j <= hh; j++) {
+            for (int i = -hw; i <= hw; i++) {
+                float g1 = interpolate_gpu(x1 + i, y1 + j, d_img1, ncols, nrows);
+                float g2 = interpolate_gpu(x2 + i, y2 + j, d_img2, ncols, nrows);
+                sum_abs_diff += fabsf(g1 - g2);
+            }
+        }
+        if (sum_abs_diff / (width * height) > max_residue) {
+            status = KLT_LARGE_RESIDUE;
+        }
+    }
+    
+    if (iteration >= max_iterations && status == KLT_TRACKED) {
+        status = KLT_MAX_ITERATIONS;
+    }
+    
+    // Write results
+    x2_arr[feat_idx] = x2;
+    y2_arr[feat_idx] = y2;
+    status_arr[feat_idx] = status;
 }
 
 __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
@@ -815,87 +989,162 @@ __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
                                  pyramid1_grady->img[i]);
      }
      
-     /* Do the same thing with second image */
-     floatimg2 = _KLTCreateFloatImage(ncols, nrows);
-     _KLTToFloatImage(img2, ncols, nrows, tmpimg);
-     _KLTComputeSmoothedImage(tmpimg, _KLTComputeSmoothSigma(tc), floatimg2);
-     pyramid2 = _KLTCreatePyramid(ncols, nrows, (int) subsampling, tc->nPyramidLevels);
-     _KLTComputePyramid(floatimg2, pyramid2, tc->pyramid_sigma_fact);
-     pyramid2_gradx = _KLTCreatePyramid(ncols, nrows, (int) subsampling, tc->nPyramidLevels);
-     pyramid2_grady = _KLTCreatePyramid(ncols, nrows, (int) subsampling, tc->nPyramidLevels);
-     for (i = 0 ; i < tc->nPyramidLevels ; i++)
-         _KLTComputeGradients(pyramid2->img[i], tc->grad_sigma,
-                             pyramid2_gradx->img[i],
-                             pyramid2_grady->img[i]);
-     
-     /* For each feature, do ... */
-     for (indx = 0 ; indx < featurelist->nFeatures ; indx++)  {
-         
-         /* Only track features that are not lost */
-         if (featurelist->feature[indx]->val >= 0)  {
-             
-             xloc = featurelist->feature[indx]->x;
-             yloc = featurelist->feature[indx]->y;
-             
-             /* Transform location to coarsest resolution */
-             for (r = tc->nPyramidLevels - 1 ; r >= 0 ; r--)  {
-                 xloc /= subsampling;  yloc /= subsampling;
-             }
-             xlocout = xloc;  ylocout = yloc;
-             
-             /* Beginning with coarsest resolution, do ... */
-             for (r = tc->nPyramidLevels - 1 ; r >= 0 ; r--)  {
-                 
-                 /* Track feature at current resolution */
-                 xloc *= subsampling;  yloc *= subsampling;
-                 xlocout *= subsampling;  ylocout *= subsampling;
-                 
-                 val = _trackFeature(xloc, yloc,
-                                    &xlocout, &ylocout,
-                                    pyramid1->img[r],
-                                    pyramid1_gradx->img[r], pyramid1_grady->img[r],
-                                    pyramid2->img[r],
-                                    pyramid2_gradx->img[r], pyramid2_grady->img[r],
-                                    tc->window_width, tc->window_height,
-                                    tc->step_factor,
-                                    tc->max_iterations,
-                                    tc->min_determinant,
-                                    tc->min_displacement,
-                                    tc->max_residue,
-                                    tc->lighting_insensitive);
-                 
-                 if (val==KLT_SMALL_DET || val==KLT_OOB)
-                     break;
-             }
-             
-             /* Record feature */
-             if (val == KLT_OOB) {
-                 featurelist->feature[indx]->x   = -1.0;
-                 featurelist->feature[indx]->y   = -1.0;
-                 featurelist->feature[indx]->val = KLT_OOB;
-             } else if (_outOfBounds(xlocout, ylocout, ncols, nrows, tc->borderx, tc->bordery))  {
-                 featurelist->feature[indx]->x   = -1.0;
-                 featurelist->feature[indx]->y   = -1.0;
-                 featurelist->feature[indx]->val = KLT_OOB;
-             } else if (val == KLT_SMALL_DET)  {
-                 featurelist->feature[indx]->x   = -1.0;
-                 featurelist->feature[indx]->y   = -1.0;
-                 featurelist->feature[indx]->val = KLT_SMALL_DET;
-             } else if (val == KLT_LARGE_RESIDUE)  {
-                 featurelist->feature[indx]->x   = -1.0;
-                 featurelist->feature[indx]->y   = -1.0;
-                 featurelist->feature[indx]->val = KLT_LARGE_RESIDUE;
-             } else if (val == KLT_MAX_ITERATIONS)  {
-                 featurelist->feature[indx]->x   = -1.0;
-                 featurelist->feature[indx]->y   = -1.0;
-                 featurelist->feature[indx]->val = KLT_MAX_ITERATIONS;
-             } else  {
-                 featurelist->feature[indx]->x = xlocout;
-                 featurelist->feature[indx]->y = ylocout;
-                 featurelist->feature[indx]->val = KLT_TRACKED;
-             }
-         }
-     }
+    /* Do the same thing with second image */
+    floatimg2 = _KLTCreateFloatImage(ncols, nrows);
+    _KLTToFloatImage(img2, ncols, nrows, tmpimg);
+    _KLTComputeSmoothedImage(tmpimg, _KLTComputeSmoothSigma(tc), floatimg2);
+    pyramid2 = _KLTCreatePyramid(ncols, nrows, (int) subsampling, tc->nPyramidLevels);
+    _KLTComputePyramid(floatimg2, pyramid2, tc->pyramid_sigma_fact);
+    pyramid2_gradx = _KLTCreatePyramid(ncols, nrows, (int) subsampling, tc->nPyramidLevels);
+    pyramid2_grady = _KLTCreatePyramid(ncols, nrows, (int) subsampling, tc->nPyramidLevels);
+    for (i = 0 ; i < tc->nPyramidLevels ; i++)
+        _KLTComputeGradients(pyramid2->img[i], tc->grad_sigma,
+                            pyramid2_gradx->img[i],
+                            pyramid2_grady->img[i]);
+    
+    // OPTIMIZATION: Upload all pyramids to GPU ONCE
+    _uploadPyramidsToGPU(pyramid1, pyramid1_gradx, pyramid1_grady,
+                         pyramid2, pyramid2_gradx, pyramid2_grady,
+                         tc->nPyramidLevels);
+    
+    // OPTIMIZATION: Prepare feature arrays for batched GPU processing
+    int nFeatures = featurelist->nFeatures;
+    float *h_x1 = (float*)malloc(nFeatures * sizeof(float));
+    float *h_y1 = (float*)malloc(nFeatures * sizeof(float));
+    float *h_x2 = (float*)malloc(nFeatures * sizeof(float));
+    float *h_y2 = (float*)malloc(nFeatures * sizeof(float));
+    int *h_status = (int*)malloc(nFeatures * sizeof(int));
+    
+    float *d_x1, *d_y1, *d_x2, *d_y2;
+    int *d_status;
+    cudaCheckError(cudaMalloc(&d_x1, nFeatures * sizeof(float)));
+    cudaCheckError(cudaMalloc(&d_y1, nFeatures * sizeof(float)));
+    cudaCheckError(cudaMalloc(&d_x2, nFeatures * sizeof(float)));
+    cudaCheckError(cudaMalloc(&d_y2, nFeatures * sizeof(float)));
+    cudaCheckError(cudaMalloc(&d_status, nFeatures * sizeof(int)));
+    
+    /* Process all pyramid levels using batched GPU kernel */
+    for (r = tc->nPyramidLevels - 1 ; r >= 0 ; r--)  {
+        
+        // Prepare feature positions for this pyramid level
+        int active_features = 0;
+        for (indx = 0 ; indx < nFeatures ; indx++)  {
+            if (featurelist->feature[indx]->val >= 0)  {
+                if (r == tc->nPyramidLevels - 1) {
+                    // First level: initialize from feature list
+                    xloc = featurelist->feature[indx]->x;
+                    yloc = featurelist->feature[indx]->y;
+                    // Transform to coarsest resolution
+                    for (int rr = tc->nPyramidLevels - 1 ; rr >= 0 ; rr--)  {
+                        xloc /= subsampling;  yloc /= subsampling;
+                    }
+                    h_x1[indx] = xloc * subsampling;
+                    h_y1[indx] = yloc * subsampling;
+                    h_x2[indx] = xloc * subsampling;
+                    h_y2[indx] = yloc * subsampling;
+                } else {
+                    // Propagate from previous level
+                    h_x1[indx] *= subsampling;
+                    h_y1[indx] *= subsampling;
+                    h_x2[indx] *= subsampling;
+                    h_y2[indx] *= subsampling;
+                }
+                active_features++;
+            }
+        }
+        
+        if (active_features == 0) break;
+        
+        // Upload feature positions to GPU
+        cudaCheckError(cudaMemcpy(d_x1, h_x1, nFeatures * sizeof(float), cudaMemcpyHostToDevice));
+        cudaCheckError(cudaMemcpy(d_y1, h_y1, nFeatures * sizeof(float), cudaMemcpyHostToDevice));
+        cudaCheckError(cudaMemcpy(d_x2, h_x2, nFeatures * sizeof(float), cudaMemcpyHostToDevice));
+        cudaCheckError(cudaMemcpy(d_y2, h_y2, nFeatures * sizeof(float), cudaMemcpyHostToDevice));
+        
+        // Launch batched tracking kernel - ALL features processed in parallel!
+        int threadsPerBlock = 256;
+        int blocksPerGrid = (nFeatures + threadsPerBlock - 1) / threadsPerBlock;
+        
+        trackFeaturesBatchedKernel<<<blocksPerGrid, threadsPerBlock>>>(
+            gpu_tracking_pool.d_pyramid1_imgs[r],
+            gpu_tracking_pool.d_pyramid2_imgs[r],
+            gpu_tracking_pool.d_pyramid1_gradx[r],
+            gpu_tracking_pool.d_pyramid1_grady[r],
+            gpu_tracking_pool.d_pyramid2_gradx[r],
+            gpu_tracking_pool.d_pyramid2_grady[r],
+            d_x1, d_y1, d_x2, d_y2, d_status,
+            nFeatures,
+            tc->window_width, tc->window_height,
+            pyramid1->ncols[r], pyramid1->nrows[r],
+            tc->step_factor, tc->max_iterations,
+            tc->min_determinant, tc->min_displacement, tc->max_residue);
+        
+        cudaCheckError(cudaDeviceSynchronize());
+        
+        // Download results
+        cudaCheckError(cudaMemcpy(h_x2, d_x2, nFeatures * sizeof(float), cudaMemcpyDeviceToHost));
+        cudaCheckError(cudaMemcpy(h_y2, d_y2, nFeatures * sizeof(float), cudaMemcpyDeviceToHost));
+        cudaCheckError(cudaMemcpy(h_status, d_status, nFeatures * sizeof(int), cudaMemcpyDeviceToHost));
+        
+        // Update feature list with results
+        for (indx = 0 ; indx < nFeatures ; indx++)  {
+            if (featurelist->feature[indx]->val >= 0) {
+                if (h_status[indx] == KLT_SMALL_DET || h_status[indx] == KLT_OOB) {
+                    featurelist->feature[indx]->val = h_status[indx];
+                }
+            }
+        }
+    }
+    
+    // Final update of feature positions from GPU results
+    for (indx = 0 ; indx < nFeatures ; indx++)  {
+        if (featurelist->feature[indx]->val >= 0) {
+            val = h_status[indx];
+            xlocout = h_x2[indx];
+            ylocout = h_y2[indx];
+            
+            /* Record feature */
+            if (val == KLT_OOB) {
+                featurelist->feature[indx]->x   = -1.0;
+                featurelist->feature[indx]->y   = -1.0;
+                featurelist->feature[indx]->val = KLT_OOB;
+            } else if (_outOfBounds(xlocout, ylocout, ncols, nrows, tc->borderx, tc->bordery))  {
+                featurelist->feature[indx]->x   = -1.0;
+                featurelist->feature[indx]->y   = -1.0;
+                featurelist->feature[indx]->val = KLT_OOB;
+            } else if (val == KLT_SMALL_DET)  {
+                featurelist->feature[indx]->x   = -1.0;
+                featurelist->feature[indx]->y   = -1.0;
+                featurelist->feature[indx]->val = KLT_SMALL_DET;
+            } else if (val == KLT_LARGE_RESIDUE)  {
+                featurelist->feature[indx]->x   = -1.0;
+                featurelist->feature[indx]->y   = -1.0;
+                featurelist->feature[indx]->val = KLT_LARGE_RESIDUE;
+            } else if (val == KLT_MAX_ITERATIONS)  {
+                featurelist->feature[indx]->x   = -1.0;
+                featurelist->feature[indx]->y   = -1.0;
+                featurelist->feature[indx]->val = KLT_MAX_ITERATIONS;
+            } else  {
+                featurelist->feature[indx]->x = xlocout;
+                featurelist->feature[indx]->y = ylocout;
+                featurelist->feature[indx]->val = KLT_TRACKED;
+            }
+        }
+    }
+    
+    // Free GPU memory
+    cudaFree(d_x1);
+    cudaFree(d_y1);
+    cudaFree(d_x2);
+    cudaFree(d_y2);
+    cudaFree(d_status);
+    
+    // Free host memory
+    free(h_x1);
+    free(h_y1);
+    free(h_x2);
+    free(h_y2);
+    free(h_status);
      
      if (tc->sequentialMode)  {
          tc->pyramid_last = pyramid2;
