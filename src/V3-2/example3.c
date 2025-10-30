@@ -23,7 +23,7 @@ int main()
   KLT_TrackingContext tc;
   KLT_FeatureList fl;
   KLT_FeatureTable ft;
-  int nFeatures = 150, nFrames = 10;
+  int nFeatures = 150, nFrames = 168;
   int ncols, nrows;
   int i;
 
