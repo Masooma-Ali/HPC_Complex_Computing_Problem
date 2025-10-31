@@ -1,6 +1,6 @@
 /**********************************************************************
 Finds the 150 best features in an image and tracks them through the 
-sequence of images: frame_000320.pgm to frame_000600.pgm.
+sequence of images: frame_0001.pgm to frame_0044.pgm.
 The sequential mode is set in order to speed processing.
 The features are stored in a feature table and written to files.
 **********************************************************************/
@@ -23,8 +23,8 @@ int main()
   KLT_TrackingContext tc;
   KLT_FeatureList fl;
   KLT_FeatureTable ft;
-  int nFeatures = 150;
-  int startFrame = 320, endFrame = 600;
+  int nFeatures = 500;
+  int startFrame = 1, endFrame = 44;   // <-- updated frame range
   int nFrames = endFrame - startFrame + 1;
   int ncols, nrows;
   int i, frame;
@@ -39,19 +39,19 @@ int main()
   tc->affineConsistencyCheck = -1;  /* set this to 2 to turn on affine consistency check */
 
   // Read the first image
-  sprintf(fnamein, "newset/frame_%06d.pgm", startFrame);
+  sprintf(fnamein, "frames_set/frame_%04d.pgm", startFrame);  // <-- changed %06d to %04d
   img1 = pgmReadFile(fnamein, NULL, &ncols, &nrows);
   img2 = (unsigned char *) malloc(ncols * nrows * sizeof(unsigned char));
 
   // Select good features from the first image
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
   KLTStoreFeatureList(fl, ft, 0);
-  sprintf(fnameout, "feat_%06d.ppm", startFrame);
+  sprintf(fnameout, "feat_%04d.ppm", startFrame);  // <-- changed %06d to %04d
   KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, fnameout);
 
   // Track features through all subsequent frames
   for (i = 1, frame = startFrame + 1; frame <= endFrame; i++, frame++) {
-    sprintf(fnamein, "newset/frame_%06d.pgm", frame);
+    sprintf(fnamein, "frames_set/frame_%04d.pgm", frame);  // <-- changed %06d to %04d
     pgmReadFile(fnamein, img2, &ncols, &nrows);
 
     KLTTrackFeatures(tc, img1, img2, ncols, nrows, fl);
@@ -61,7 +61,7 @@ int main()
 #endif
 
     KLTStoreFeatureList(fl, ft, i);
-    sprintf(fnameout, "feat_%06d.ppm", frame);
+    sprintf(fnameout, "feat_%04d.ppm", frame);  // <-- changed %06d to %04d
     KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
   }
 
