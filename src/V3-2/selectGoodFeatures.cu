@@ -586,22 +586,9 @@ extern "C" void KLTSelectGoodFeatures(
   int nrows,
   KLT_FeatureList fl)
 {
-  if (KLT_verbose >= 1)  {
-    fprintf(stderr,  "(KLT) Selecting the %d best features "
-            "from a %d by %d image...  ", fl->nFeatures, ncols, nrows);
-    fflush(stderr);
-  }
-
+  // Removed verbose output for performance
   _KLTSelectGoodFeatures(tc, img, ncols, nrows, 
                          fl, SELECTING_ALL);
-
-  if (KLT_verbose >= 1)  {
-    fprintf(stderr,  "\n\t%d features found.\n", 
-            KLTCountRemainingFeatures(fl));
-    if (tc->writeInternalImages)
-      fprintf(stderr,  "\tWrote images to 'kltimg_sgfrlf*.pgm'.\n");
-    fflush(stderr);
-  }
 }
 
 /*********************************************************************

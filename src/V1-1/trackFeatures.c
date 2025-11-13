@@ -1279,7 +1279,7 @@ void KLTTrackFeatures(
 
 	/* Create temporary image */
 	tmpimg = _KLTCreateFloatImage(ncols, nrows);
-
+	
 	/* Process first image by converting to float, smoothing, computing */
 	/* pyramid, and computing gradient pyramids */
 	if (tc->sequentialMode && tc->pyramid_last != NULL)  {

@@ -1098,35 +1098,21 @@ __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
      float xloc, yloc, xlocout, ylocout;
      int val;
      int indx, r;
-     KLT_BOOL floatimg1_created = FALSE;
-     int i;
-     
-     if (KLT_verbose >= 1)  {
-         fprintf(stderr,  "(KLT-GPU) Tracking %d features in a %d by %d image...  ",
-                 KLTCountRemainingFeatures(featurelist), ncols, nrows);
-         fflush(stderr);
-     }
+    KLT_BOOL floatimg1_created = FALSE;
+    int i;
      
      /* Check window size (and correct if necessary) */
      if (tc->window_width % 2 != 1) {
          tc->window_width = tc->window_width+1;
-         fprintf(stderr, "Tracking context's window width must be odd. Changing to %d.\n", 
-                 tc->window_width);
      }
      if (tc->window_height % 2 != 1) {
          tc->window_height = tc->window_height+1;
-         fprintf(stderr, "Tracking context's window height must be odd. Changing to %d.\n",
-                 tc->window_height);
      }
      if (tc->window_width < 3) {
          tc->window_width = 3;
-         fprintf(stderr, "Tracking context's window width must be at least three. Changing to %d.\n",
-                 tc->window_width);
      }
      if (tc->window_height < 3) {
          tc->window_height = 3;
-         fprintf(stderr, "Tracking context's window height must be at least three. Changing to %d.\n",
-                 tc->window_height);
      }
      
      /* Create temporary image */
@@ -1173,13 +1159,13 @@ __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
                             pyramid2_gradx->img[i],
                             pyramid2_grady->img[i]);
     
-    // HPC OPTIMIZATION: Upload pyramids with pointer swapping for sequential mode
-    // If sequential mode and pyramid_last exists, pyramid1 is reused from previous frame
-    // We swap GPU pointers instead of re-uploading - cuts pyramid upload time by 50%!
-    int sequential_reuse = (tc->sequentialMode && tc->pyramid_last != NULL);
-    _uploadPyramidsToGPU(pyramid1, pyramid1_gradx, pyramid1_grady,
-                         pyramid2, pyramid2_gradx, pyramid2_grady,
-                         tc->nPyramidLevels, sequential_reuse);
+   // HPC OPTIMIZATION: Upload pyramids with pointer swapping for sequential mode
+   // If sequential mode and pyramid_last exists, pyramid1 is reused from previous frame
+   // We swap GPU pointers instead of re-uploading - cuts pyramid upload time by 50%!
+   int sequential_reuse = (tc->sequentialMode && tc->pyramid_last != NULL);
+   _uploadPyramidsToGPU(pyramid1, pyramid1_gradx, pyramid1_grady,
+                        pyramid2, pyramid2_gradx, pyramid2_grady,
+                        tc->nPyramidLevels, sequential_reuse);
     
     // HPC OPTIMIZATION: Use persistent feature buffers (allocated once, reused forever)
     int nFeatures = featurelist->nFeatures;
@@ -1376,15 +1362,15 @@ __global__ void computeIntensityDifferenceLightingInsensitiveKernel(
      _KLTFreeFloatImage(tmpimg);
      if (floatimg1_created)  _KLTFreeFloatImage(floatimg1);
      _KLTFreeFloatImage(floatimg2);
-     _KLTFreePyramid(pyramid1);
-     _KLTFreePyramid(pyramid1_gradx);
-     _KLTFreePyramid(pyramid1_grady);
-     
-     if (KLT_verbose >= 1)  {
-         fprintf(stderr,  "\n\t%d features successfully tracked (GPU).\n",
-                 KLTCountRemainingFeatures(featurelist));
-         fflush(stderr);
-     }
+    _KLTFreePyramid(pyramid1);
+    _KLTFreePyramid(pyramid1_gradx);
+    _KLTFreePyramid(pyramid1_grady);
+    
+    if (KLT_verbose >= 1)  {
+        fprintf(stderr,  "\n\t%d features successfully tracked.\n",
+                KLTCountRemainingFeatures(featurelist));
+        fflush(stderr);
+    }
  }
  
  // OPTIMIZATION: Cleanup GPU tracking pool (call at program end)
