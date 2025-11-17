@@ -86,9 +86,9 @@ int main()
 
   // Select good features from the first image
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
-//   KLTStoreFeatureList(fl, ft, 0);
-//   sprintf(fnameout, "feat_%04d.ppm", startFrame);
-//   KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, fnameout);
+  KLTStoreFeatureList(fl, ft, 0);
+  sprintf(fnameout, "feat_%04d.ppm", startFrame);
+  KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, fnameout);
 
   // Track features through all subsequent frames
   for (i = 1, frame = startFrame + 1; frame <= endFrame; i++, frame++) {
@@ -101,9 +101,9 @@ int main()
     KLTReplaceLostFeatures(tc, img2, ncols, nrows, fl);
 #endif
 
-   //  KLTStoreFeatureList(fl, ft, i);
-   //  sprintf(fnameout, "feat_%04d.ppm", frame);
-   //  KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
+    KLTStoreFeatureList(fl, ft, i);
+    sprintf(fnameout, "feat_%04d.ppm", frame);
+    KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
   }
 
   // Save feature table results

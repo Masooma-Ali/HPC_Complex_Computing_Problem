@@ -37,12 +37,19 @@ ARCH = convolve.c error.c pnmio.c pyramid.c selectGoodFeatures.c \
 LIB = -L/usr/local/lib -L/usr/lib
 
 .SUFFIXES:  .c .o
+.PHONY: all lib clean depend profile profile1 profile2 profile3 profile4 profile5 build run
 
-all:  lib $(EXAMPLES:.c=)
+# Default target: just build
+all: build
 
+# Build everything
+build: lib $(EXAMPLES:.c=)
+
+# Compile object files
 .c.o:
 	$(CC) -c $(CFLAGS) $<
 
+# Build library from object files
 lib: $(ARCH:.c=.o)
 	rm -f libklt.a
 	ar ruv libklt.a $(ARCH:.c=.o)
@@ -63,12 +70,50 @@ example4: libklt.a
 example5: libklt.a
 	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm
 
+# Run: build, execute, and profile
+run: build
+	@echo "========================================"
+	@echo "Running example3..."
+	@echo "========================================"
+	./example3
+	@echo "========================================"
+	@echo "Execution completed!"
+	@echo "========================================"
+	@echo ""
+	@echo "========================================"
+	
+# Profiling with nsys
+profile: example3
+	@echo "========================================"
+	@echo "Profiling example3 with nsys..."
+	@echo "========================================"
+	nsys profile -o v4_profile --stats=true ./example3
+	@echo "========================================"
+	@echo "Profile data saved to v4_profile.nsys-rep"
+	@echo "Run 'nsys stats v4_profile.nsys-rep' to view statistics"
+	@echo "========================================"
+
+profile1: example1
+	nsys profile -o v4_profile_ex1 --stats=true ./example1
+
+profile2: example2
+	nsys profile -o v4_profile_ex2 --stats=true ./example2
+
+profile3: example3
+	nsys profile -o v4_profile_ex3 --stats=true ./example3
+
+profile4: example4
+	nsys profile -o v4_profile_ex4 --stats=true ./example4
+
+profile5: example5
+	nsys profile -o v4_profile_ex5 --stats=true ./example5
+
 depend:
 	makedepend $(ARCH) $(EXAMPLES)
 
 clean:
 	rm -f *.o *.a $(EXAMPLES:.c=) *.tar *.tar.gz libklt.a \
-	      feat*.ppm features.ft features.txt
+	      feat*.ppm features.ft features.txt *.nsys-rep *.sqlite
 
 
 
