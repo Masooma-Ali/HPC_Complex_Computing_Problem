@@ -1,44 +1,79 @@
-# GPU-accelerated KLT Makefile
+######################################################################
+# GPU-accelerated KLT Makefile for V3-2
 CC = gcc
 NVCC = nvcc
 ARCH = sm_75
 
-.PHONY: all clean run profile
+######################################################################
+# Compilation flags
+CFLAGS = -DNDEBUG -O3
+NVCCFLAGS = -arch=$(ARCH) -O3
 
-all: example3_gpu
+######################################################################
+# Source files
+CPU_SRC = error.c pnmio.c pyramid.c storeFeatures.c klt.c klt_util.c writeFeatures.c
+GPU_SRC = convole.cu trackfeatures.cu selectGoodFeatures.cu
+EXAMPLES = example1.c example2.c example3.c example4.c example5.c
+
+.SUFFIXES: .c .cu .o
+.PHONY: all lib clean depend profile profile1 profile2 profile3 profile4 profile5 build run cpu_objs gpu_objs
+
+# Default target: just build
+all: build
+
+# Build everything
+build: lib example3_gpu
+
+# Compile CPU object files
+cpu_objs: $(CPU_SRC:.c=.o)
+
+# Compile GPU object files
+gpu_objs: $(GPU_SRC:.cu=.o)
+
+# Compile .c files to .o
+.c.o:
+	$(CC) -c $(CFLAGS) $<
+
+# Compile .cu files to .o
+.cu.o:
+	$(NVCC) -c $(NVCCFLAGS) $<
+
+# Build library from object files
+lib: cpu_objs gpu_objs
+	rm -f libklt_gpu.a
+	ar ruv libklt_gpu.a $(CPU_SRC:.c=.o) $(GPU_SRC:.cu=.o)
+	rm -f $(CPU_SRC:.c=.o) $(GPU_SRC:.cu=.o)
 
 example3_gpu: libklt_gpu.a
-	$(NVCC) -arch=$(ARCH) -O3 -o example3_gpu example3.c -L. -lklt_gpu -lm
+	$(NVCC) $(NVCCFLAGS) -o $@ example3.c -L. -lklt_gpu -lm
 
-libklt_gpu.a: cpu_objs gpu_objs
-	ar ruv libklt_gpu.a *.o
-
-cpu_objs:
-	$(CC) -c -DNDEBUG -O3 error.c pnmio.c pyramid.c storeFeatures.c klt.c klt_util.c writeFeatures.c
-
-gpu_objs:
-	$(NVCC) -c -arch=$(ARCH) -O3 convole.cu trackfeatures.cu selectGoodFeatures.cu gpu_memory_pool.cu
-
-run: example3_gpu
+# Run: build and execute
+run: build
+	@echo "========================================"
+	@echo "Running example3_gpu..."
+	@echo "========================================"
 	./example3_gpu
+	@echo "========================================"
+	@echo "Execution completed!"
+	@echo "========================================"
 
+# Profiling with nsys
 profile: example3_gpu
-	@if command -v nvprof >/dev/null 2>&1; then \
-		echo "=== GPU Profiling with nvprof ==="; \
-		nvprof --log-file nvprof_output.txt --print-gpu-trace ./example3_gpu; \
-		echo "Profiling complete. See nvprof_output.txt for details."; \
-	elif command -v nsys >/dev/null 2>&1; then \
-		echo "=== GPU Profiling with nsys ==="; \
-		nsys profile -o klt_gpu_profile --stats=true ./example3_gpu; \
-		nsys stats --force-export=true klt_gpu_profile.nsys-rep > klt_gpu_stats.txt; \
-	else \
-		echo "=== Performance Measurement (time only) ==="; \
-		time ./example3_gpu; \
-		echo ""; \
-		echo "For GPU profiling, install nvprof or nsys:"; \
-		echo "  nvprof: Usually comes with CUDA toolkit"; \
-		echo "  nsys: apt-get install nsight-systems-cli"; \
-	fi
+	@echo "========================================"
+	@echo "Profiling example3_gpu with nsys..."
+	@echo "========================================"
+	nsys profile --force-overwrite=true --trace=cuda --output v3-2_profile --stats=true ./example3_gpu
+	@echo "========================================"
+	@echo "Profile data saved to v3-2_profile.nsys-rep"
+	@echo "Run 'nsys stats v3-2_profile.nsys-rep' to view statistics"
+	@echo "========================================"
+
+depend:
+	@echo "Dependencies managed automatically"
 
 clean:
-	rm -f *.o libklt_gpu.a example3_gpu klt_gpu_profile* klt_gpu_stats.txt nvprof_output.txt *.sqlite feat*.ppm features.*
+	@echo "Cleaning build artifacts..."
+	rm -f *.o *.a example3_gpu *.tar *.tar.gz libklt_gpu.a \
+	      feat*.ppm features.ft features.txt *.nsys-rep *.sqlite \
+	      v3-2_profile.* gpu_profile.* 2>/dev/null
+	@echo "Clean completed!"

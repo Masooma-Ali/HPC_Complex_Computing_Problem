@@ -1,19 +1,15 @@
 /**********************************************************************
 Finds the 150 best features in an image and tracks them through the 
-next two images.  The sequential mode is set in order to speed
-processing.  The features are stored in a feature table, which is then
-saved to a text file; each feature list is also written to a PPM file.
+sequence of images: frame_0001.pgm to frame_0044.pgm.
+The sequential mode is set in order to speed processing.
+The features are stored in a feature table and written to files.
 **********************************************************************/
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/time.h>
 #include "pnmio.h"
 #include "klt.h"
-
-// GPU memory pool functions
-extern int GPU_InitMemoryPool(int max_ncols, int max_nrows, int max_window_size);
-extern int GPU_InitMemoryPoolPyramid(int max_ncols, int max_nrows, int max_window_size, int n_levels);
-extern void GPU_FreeMemoryPool();
 
 /* #define REPLACE */
 
@@ -24,53 +20,80 @@ int main()
 #endif
 {
   unsigned char *img1, *img2;
-  char fnamein[100], fnameout[100];
+  char fnamein[200], fnameout[200];
   KLT_TrackingContext tc;
   KLT_FeatureList fl;
   KLT_FeatureTable ft;
-  int nFeatures = 150, nFrames = 10;
+  int nFeatures = 150;
+  int nFrames = 10;
   int ncols, nrows;
   int i;
 
+  // Timing variables
+  struct timeval tv_start, tv_stop;
+  double total_time_ms = 0.0;
+
+  // Create tracking structures
   tc = KLTCreateTrackingContext();
   fl = KLTCreateFeatureList(nFeatures);
   ft = KLTCreateFeatureTable(nFrames, nFeatures);
+
   tc->sequentialMode = TRUE;
   tc->writeInternalImages = FALSE;
   tc->affineConsistencyCheck = -1;  /* set this to 2 to turn on affine consistency check */
- 
+
+  // Read the first image
   img1 = pgmReadFile("img0.pgm", NULL, &ncols, &nrows);
-  img2 = (unsigned char *) malloc(ncols*nrows*sizeof(unsigned char));
+  img2 = (unsigned char *) malloc(ncols * nrows * sizeof(unsigned char));
 
-  // Initialize GPU memory pool with image dimensions, window size, and pyramid levels
-  // This enables: pinned memory, pyramid GPU buffers, and image persistence
-  GPU_InitMemoryPoolPyramid(ncols, nrows, tc->window_width, tc->nPyramidLevels);
+  // ========== START TOTAL TIMING ==========
+  gettimeofday(&tv_start, NULL);
+  // ========================================
 
+  // Select good features from the first image
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
   KLTStoreFeatureList(fl, ft, 0);
   KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, "feat0.ppm");
 
-  for (i = 1 ; i < nFrames ; i++)  {
+  // Track features through all subsequent frames
+  for (i = 1; i < nFrames; i++) {
     sprintf(fnamein, "img%d.pgm", i);
     pgmReadFile(fnamein, img2, &ncols, &nrows);
+
     KLTTrackFeatures(tc, img1, img2, ncols, nrows, fl);
+
 #ifdef REPLACE
     KLTReplaceLostFeatures(tc, img2, ncols, nrows, fl);
 #endif
+
     KLTStoreFeatureList(fl, ft, i);
     sprintf(fnameout, "feat%d.ppm", i);
     KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
   }
+
+  // Save feature table results
   KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
   KLTWriteFeatureTable(ft, "features.ft", NULL);
 
+  // ========== STOP TOTAL TIMING ==========
+  gettimeofday(&tv_stop, NULL);
+  total_time_ms = (tv_stop.tv_sec - tv_start.tv_sec) * 1000.0 +
+                  (tv_stop.tv_usec - tv_start.tv_usec) / 1000.0;
+  // =======================================
+
+  printf("\n");
+  printf("╔══════════════════════════════════════════════════════════════════════╗\n");
+  printf("║                    TOTAL EXECUTION TIME (V3 CPU)                    ║\n");
+  printf("╠══════════════════════════════════════════════════════════════════════╣\n");
+  printf("║ Total Time (All %d frames + File I/O): %10.3f ms              ║\n", nFrames, total_time_ms);
+  printf("║ Average Time per Frame:                 %10.3f ms              ║\n", total_time_ms / nFrames);
+  printf("╚══════════════════════════════════════════════════════════════════════╝\n");
+  printf("\n");
+
+  // Free memory
   KLTFreeFeatureTable(ft);
   KLTFreeFeatureList(fl);
   KLTFreeTrackingContext(tc);
-  
-  // Cleanup GPU memory pool
-  GPU_FreeMemoryPool();
-  
   free(img1);
   free(img2);
 

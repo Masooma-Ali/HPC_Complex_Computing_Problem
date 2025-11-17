@@ -1,68 +1,79 @@
 ######################################################################
-# Choose your favorite C compiler
+# GPU-accelerated KLT Makefile for V3-2
 CC = gcc
+NVCC = nvcc
+ARCH = sm_75
 
 ######################################################################
-# -DNDEBUG prevents the assert() statements from being included in 
-# the code.  If you are having problems running the code, you might 
-# want to comment this line to see if an assert() statement fires.
-FLAG1 = -DNDEBUG
+# Compilation flags
+CFLAGS = -DNDEBUG -O3
+NVCCFLAGS = -arch=$(ARCH) -O3
 
 ######################################################################
-# -DKLT_USE_QSORT forces the code to use the standard qsort() 
-# routine.  Otherwise it will use a quicksort routine that takes
-# advantage of our specific data structure to greatly reduce the
-# running time on some machines.  Uncomment this line if for some
-# reason you are unhappy with the special routine.
-# FLAG2 = -DKLT_USE_QSORT
-
-######################################################################
-# Add your favorite C flags here.
-CFLAGS = $(FLAG1) $(FLAG2)
-
-
-######################################################################
-# There should be no need to modify anything below this line (but
-# feel free to if you want).
-
+# Source files
+CPU_SRC = error.c pnmio.c pyramid.c storeFeatures.c klt.c klt_util.c writeFeatures.c
+GPU_SRC = convole.cu trackfeatures.cu selectGoodFeatures.cu
 EXAMPLES = example1.c example2.c example3.c example4.c example5.c
-ARCH = convolve.c error.c pnmio.c pyramid.c selectGoodFeatures.c \
-       storeFeatures.c trackFeatures.c klt.c klt_util.c writeFeatures.c
-LIB = -L/usr/local/lib -L/usr/lib
 
-.SUFFIXES:  .c .o
+.SUFFIXES: .c .cu .o
+.PHONY: all lib clean depend profile profile1 profile2 profile3 profile4 profile5 build run cpu_objs gpu_objs
 
-all:  lib $(EXAMPLES:.c=)
+# Default target: just build
+all: build
 
+# Build everything
+build: lib example3_gpu
+
+# Compile CPU object files
+cpu_objs: $(CPU_SRC:.c=.o)
+
+# Compile GPU object files
+gpu_objs: $(GPU_SRC:.cu=.o)
+
+# Compile .c files to .o
 .c.o:
 	$(CC) -c $(CFLAGS) $<
 
-lib: $(ARCH:.c=.o)
-	rm -f libklt.a
-	ar ruv libklt.a $(ARCH:.c=.o)
-	rm -f *.o
+# Compile .cu files to .o
+.cu.o:
+	$(NVCC) -c $(NVCCFLAGS) $<
 
-example1: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm
+# Build library from object files
+lib: cpu_objs gpu_objs
+	rm -f libklt_gpu.a
+	ar ruv libklt_gpu.a $(CPU_SRC:.c=.o) $(GPU_SRC:.cu=.o)
+	rm -f $(CPU_SRC:.c=.o) $(GPU_SRC:.cu=.o)
 
-example2: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm
+example3_gpu: libklt_gpu.a
+	$(NVCC) $(NVCCFLAGS) -o $@ example3.c -L. -lklt_gpu -lm
 
-example3: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm
+# Run: build and execute
+run: build
+	@echo "========================================"
+	@echo "Running example3_gpu..."
+	@echo "========================================"
+	./example3_gpu
+	@echo "========================================"
+	@echo "Execution completed!"
+	@echo "========================================"
 
-example4: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm
-
-example5: libklt.a
-	$(CC) -O3 $(CFLAGS) -o $@ $@.c -L. -lklt $(LIB) -lm
+# Profiling with nsys
+profile: example3_gpu
+	@echo "========================================"
+	@echo "Profiling example3_gpu with nsys..."
+	@echo "========================================"
+	nsys profile --force-overwrite=true --trace=cuda --output v3-2_profile --stats=true ./example3_gpu
+	@echo "========================================"
+	@echo "Profile data saved to v3-2_profile.nsys-rep"
+	@echo "Run 'nsys stats v3-2_profile.nsys-rep' to view statistics"
+	@echo "========================================"
 
 depend:
-	makedepend $(ARCH) $(EXAMPLES)
+	@echo "Dependencies managed automatically"
 
 clean:
-	rm -f *.o *.a $(EXAMPLES:.c=) *.tar *.tar.gz libklt.a \
-	      feat*.ppm features.ft features.txt
-
-
-
+	@echo "Cleaning build artifacts..."
+	rm -f *.o *.a example3_gpu *.tar *.tar.gz libklt_gpu.a \
+	      feat*.ppm features.ft features.txt *.nsys-rep *.sqlite \
+	      v3-2_profile.* gpu_profile.* 2>/dev/null
+	@echo "Clean completed!"

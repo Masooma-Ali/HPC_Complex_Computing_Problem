@@ -7,6 +7,7 @@ saved to a text file; each feature list is also written to a PPM file.
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/time.h>
 #include "pnmio.h"
 #include "klt.h"
 
@@ -27,6 +28,10 @@ int main()
   int ncols, nrows;
   int i;
 
+  // Timing variables
+  struct timeval tv_start, tv_stop;
+  double total_time_ms = 0.0;
+
   tc = KLTCreateTrackingContext();
   fl = KLTCreateFeatureList(nFeatures);
   ft = KLTCreateFeatureTable(nFrames, nFeatures);
@@ -36,6 +41,10 @@ int main()
  
   img1 = pgmReadFile("img0.pgm", NULL, &ncols, &nrows);
   img2 = (unsigned char *) malloc(ncols*nrows*sizeof(unsigned char));
+
+  // ========== START TOTAL TIMING ==========
+  gettimeofday(&tv_start, NULL);
+  // ========================================
 
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
   KLTStoreFeatureList(fl, ft, 0);
@@ -54,6 +63,21 @@ int main()
   }
   KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
   KLTWriteFeatureTable(ft, "features.ft", NULL);
+
+  // ========== STOP TOTAL TIMING ==========
+  gettimeofday(&tv_stop, NULL);
+  total_time_ms = (tv_stop.tv_sec - tv_start.tv_sec) * 1000.0 +
+                  (tv_stop.tv_usec - tv_start.tv_usec) / 1000.0;
+  // =======================================
+
+  printf("\n");
+  printf("╔══════════════════════════════════════════════════════════════════════╗\n");
+  printf("║                    TOTAL EXECUTION TIME (V2 CPU)                     ║\n");
+  printf("╠══════════════════════════════════════════════════════════════════════╣\n");
+  printf("║ Total Time (All %d frames + File I/O): %10.3f ms              ║\n", nFrames, total_time_ms);
+  printf("║ Average Time per Frame:                 %10.3f ms              ║\n", total_time_ms / nFrames);
+  printf("╚══════════════════════════════════════════════════════════════════════╝\n");
+  printf("\n");
   KLTFreeFeatureTable(ft);
   KLTFreeFeatureList(fl);
   KLTFreeTrackingContext(tc);

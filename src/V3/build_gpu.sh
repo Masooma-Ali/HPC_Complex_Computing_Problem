@@ -40,8 +40,8 @@ gcc -c -DNDEBUG -O3 error.c pnmio.c pyramid.c \
     storeFeatures.c klt.c klt_util.c writeFeatures.c
 
 # Compile GPU source files
-echo "→ Compiling GPU source files (convolve.cu, trackfeatures.cu, selectGoodFeatures.cu, gpu_memory_pool.cu)..."
-nvcc -c -arch=sm_75 -O3 convolve.cu trackfeatures.cu selectGoodFeatures.cu gpu_memory_pool.cu
+echo "→ Compiling GPU source files (convolve.cu, trackfeatures.cu, selectGoodFeatures.cu)..."
+nvcc -c -arch=sm_75 -O3 convolve.cu trackfeatures.cu selectGoodFeatures.cu
 
 # Create library
 echo "→ Creating library..."
@@ -62,8 +62,7 @@ echo ""
 echo "To run the example:"
 echo "  ./example3_gpu"
 echo ""
-echo "Note: This uses FULL GPU acceleration with optimized memory management:"
-echo "      - GPU memory pool (persistent buffers, no per-call allocation)"
+echo "Note: This uses FULL GPU acceleration:"
 echo "      - GPU convolution with shared memory optimization (convolve.cu)"
 echo "      - GPU feature selection with eigenvalue computation (selectGoodFeatures.cu)"
 echo "      - GPU feature tracking (trackfeatures.cu)"

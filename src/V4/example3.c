@@ -53,11 +53,10 @@ int main()
   KLT_TrackingContext tc;
   KLT_FeatureList fl;
   KLT_FeatureTable ft;
-  int nFeatures = 500;
-  int startFrame = 320, endFrame = 600;
-  int nFrames = endFrame - startFrame + 1;
+  int nFeatures = 150;
+  int nFrames = 10;
   int ncols, nrows;
-  int i, frame;
+  int i;
 
   // Timing variables
   struct timeval tv_start, tv_stop;
@@ -76,8 +75,7 @@ int main()
   tc->affineConsistencyCheck = -1;  /* set this to 2 to turn on affine consistency check */
 
   // Read the first image
-  sprintf(fnamein, "newset/frame_%06d.pgm", startFrame);
-  img1 = pgmReadFile(fnamein, NULL, &ncols, &nrows);
+  img1 = pgmReadFile("img0.pgm", NULL, &ncols, &nrows);
   img2 = (unsigned char *) malloc(ncols * nrows * sizeof(unsigned char));
 
   // ========== START TOTAL TIMING ==========
@@ -87,12 +85,11 @@ int main()
   // Select good features from the first image
   KLTSelectGoodFeatures(tc, img1, ncols, nrows, fl);
   KLTStoreFeatureList(fl, ft, 0);
-  sprintf(fnameout, "feat_%04d.ppm", startFrame);
-  KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, fnameout);
+  KLTWriteFeatureListToPPM(fl, img1, ncols, nrows, "feat0.ppm");
 
   // Track features through all subsequent frames
-  for (i = 1, frame = startFrame + 1; frame <= endFrame; i++, frame++) {
-    sprintf(fnamein, "newset/frame_%06d.pgm", frame);
+  for (i = 1; i < nFrames; i++) {
+    sprintf(fnamein, "img%d.pgm", i);
     pgmReadFile(fnamein, img2, &ncols, &nrows);
 
     KLTTrackFeatures(tc, img1, img2, ncols, nrows, fl);
@@ -102,13 +99,13 @@ int main()
 #endif
 
     KLTStoreFeatureList(fl, ft, i);
-    sprintf(fnameout, "feat_%04d.ppm", frame);
+    sprintf(fnameout, "feat%d.ppm", i);
     KLTWriteFeatureListToPPM(fl, img2, ncols, nrows, fnameout);
   }
 
   // Save feature table results
-//   KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
-//   KLTWriteFeatureTable(ft, "features.ft", NULL);
+  KLTWriteFeatureTable(ft, "features.txt", "%5.1f");
+  KLTWriteFeatureTable(ft, "features.ft", NULL);
 
   // ========== STOP TOTAL TIMING ==========
   gettimeofday(&tv_stop, NULL);
